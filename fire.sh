@@ -3,12 +3,13 @@
 # --- CONFIG ---
 BINARY_PATH="/usr/local/bin/kototelega"
 CONFIG_FILE="/etc/kototelega.conf"
-IMAGE="nineseconds/mtg:master"
+IMAGE="nineseconds/mtg:stable"
 CONTAINER_NAME="mtproto-proxy"
 
 # --- COLORS ---
 RED='\033[0;31m'
-YELLOW='\033[1;33m'
+YELLOW='\033[0;33m'
+GREEN='\033[0;32m'
 NC='\033[0m'
 
 # --- CONFIG HELPERS ---
