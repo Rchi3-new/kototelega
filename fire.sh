@@ -6,7 +6,7 @@ CONFIG_FILE="/etc/kototelega.conf"
 IMAGE="nineseconds/mtg:master"
 CONTAINER_NAME="mtproto-proxy"
 
-# --- COLORS (minimal) ---
+# --- COLORS ---
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
@@ -86,17 +86,11 @@ get_healthcheck_status() {
     else
         echo "OFF"
     fi
-}}' | grep -q "^${CONTAINER_NAME}$"; then
-        echo "RUNNING"
-    else
-        echo "STOPPED"
-    fi
 }
 
 # --- SHOW CONFIG ---
 show_config() {
     load_config
-
     if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         echo -e "${RED}Proxy not running${NC}"
         return
@@ -127,7 +121,6 @@ validate_port() {
 # --- RUN CONTAINER ---
 run_container() {
     docker rm -f "$CONTAINER_NAME" &>/dev/null
-
     docker run -d --name "$CONTAINER_NAME" --restart always -p "$PORT":"$PORT" \
         "$IMAGE" simple-run -n 1.1.1.1 -i prefer-ipv4 0.0.0.0:"$PORT" "$SECRET" > /dev/null
 }
@@ -148,7 +141,6 @@ install_proxy() {
 
     save_config
     run_container
-
     show_config
 }
 
@@ -170,16 +162,13 @@ change_port() {
 
     PORT=$NEW_PORT
     save_config
-
     run_container
-
     echo "Port updated"
 }
 
 # --- UPDATE IMAGE ---
 update_image() {
     load_config
-
     docker pull "$IMAGE" || return
 
     if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -206,7 +195,6 @@ setup_autoupdate() {
     HEALTH_JOB="*/5 * * * * $BINARY_PATH --health-check"
 
     (crontab -l 2>/dev/null | grep -v "$BINARY_PATH"; echo "$CRON_JOB"; echo "$HEALTH_JOB") | crontab -
-
     echo "Cron enabled"
 }
 
@@ -248,11 +236,13 @@ while true; do
     echo "2) Show connection info"
     echo "3) Update Docker image"
     echo "4) Change port"
-        if crontab -l 2>/dev/null | grep -q "$BINARY_PATH --auto-update"; then
+
+    if crontab -l 2>/dev/null | grep -q "$BINARY_PATH --auto-update"; then
         echo "5) Disable auto-update"
     else
         echo "5) Enable auto-update"
     fi
+
     echo "7) Remove proxy"
     echo "0) Exit"
 
@@ -270,9 +260,8 @@ while true; do
                 setup_autoupdate
             fi
             read -p "Press Enter..." ;;
-
         7) remove_proxy; read -p "Press Enter..." ;;
         0) exit 0 ;;
         *) echo -e "${RED}Invalid option${NC}"; sleep 1 ;;
     esac
-done
+ done
