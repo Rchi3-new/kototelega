@@ -3,19 +3,21 @@
 # --- CONFIG ---
 BINARY_PATH="/usr/local/bin/kototelega"
 CONFIG_FILE="/etc/kototelega.conf"
-IMAGE="nineseconds/mtg:stable"
+IMAGE="nineseconds/mtg:2"
 CONTAINER_NAME="mtproto-proxy"
 
 # --- COLORS ---
 RED='\033[0;31m'
-YELLOW='\033[0;33m'
 GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # --- CONFIG HELPERS ---
 save_config() {
-    echo "PORT=$PORT" > "$CONFIG_FILE"
-    echo "SECRET=$SECRET" >> "$CONFIG_FILE"
+    cat > "$CONFIG_FILE" <<EOF
+PORT=$PORT
+SECRET=$SECRET
+EOF
 }
 
 load_config() {
@@ -59,51 +61,76 @@ install_deps() {
     chmod +x "$BINARY_PATH"
 }
 
-# --- GET IP ---
-get_ip() {
-    curl -s -4 --max-time 5 https://api.ipify.org || echo "0.0.0.0"
+# --- HELPERS ---
+is_container_running() {
+    docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"
+}
+
+is_autoupdate_enabled() {
+    crontab -l 2>/dev/null | grep -q "$BINARY_PATH --auto-update"
+}
+
+is_healthcheck_enabled() {
+    crontab -l 2>/dev/null | grep -q "$BINARY_PATH --health-check"
 }
 
 # --- STATUS ---
 get_status() {
-    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        echo "RUNNING"
+    if is_container_running; then
+        echo -e "${GREEN}RUNNING${NC}"
     else
-        echo "STOPPED"
+        echo -e "${RED}STOPPED${NC}"
     fi
 }
 
 get_autoupdate_status() {
-    if crontab -l 2>/dev/null | grep -q "$BINARY_PATH --auto-update"; then
-        echo "ON"
+    if is_autoupdate_enabled; then
+        echo -e "${GREEN}ON${NC}"
     else
-        echo "OFF"
+        echo -e "${YELLOW}OFF${NC}"
     fi
 }
 
 get_healthcheck_status() {
-    if crontab -l 2>/dev/null | grep -q "$BINARY_PATH --health-check"; then
-        echo "ON"
+    if is_healthcheck_enabled; then
+        echo -e "${GREEN}ON${NC}"
     else
-        echo "OFF"
+        echo -e "${YELLOW}OFF${NC}"
     fi
 }
 
-# --- SHOW CONFIG ---
+# --- NETWORK ---
+get_ip() {
+    curl -s -4 --max-time 5 https://api.ipify.org || echo "0.0.0.0"
+}
+
+# --- DOCKER ---
+run_container() {
+    docker rm -f "$CONTAINER_NAME" &>/dev/null
+    docker run -d --name "$CONTAINER_NAME" --restart always -p "$PORT":"$PORT" \
+        "$IMAGE" simple-run -n 1.1.1.1 -i prefer-ipv4 0.0.0.0:"$PORT" "$SECRET" > /dev/null
+}
+
+# --- VALIDATION ---
+validate_port() {
+    [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+# --- FEATURES ---
 show_config() {
     load_config
-    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+
+    if ! is_container_running; then
         echo -e "${RED}Proxy not running${NC}"
         return
     fi
-
-    IP=$(get_ip)
 
     if [ -z "$PORT" ] || [ -z "$SECRET" ]; then
         echo -e "${RED}Config missing${NC}"
         return
     fi
 
+    IP=$(get_ip)
     LINK="tg://proxy?server=$IP&port=$PORT&secret=$SECRET"
 
     echo "IP: $IP"
@@ -114,19 +141,6 @@ show_config() {
     qrencode -t ANSIUTF8 "$LINK"
 }
 
-# --- VALIDATION ---
-validate_port() {
-    [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
-}
-
-# --- RUN CONTAINER ---
-run_container() {
-    docker rm -f "$CONTAINER_NAME" &>/dev/null
-    docker run -d --name "$CONTAINER_NAME" --restart always -p "$PORT":"$PORT" \
-        "$IMAGE" simple-run -n 1.1.1.1 -i prefer-ipv4 0.0.0.0:"$PORT" "$SECRET" > /dev/null
-}
-
-# --- INSTALL PROXY ---
 install_proxy() {
     read -p "Enter port (default 443): " PORT
     PORT=${PORT:-443}
@@ -145,7 +159,6 @@ install_proxy() {
     show_config
 }
 
-# --- CHANGE PORT ---
 change_port() {
     load_config
 
@@ -164,15 +177,16 @@ change_port() {
     PORT=$NEW_PORT
     save_config
     run_container
+
     echo "Port updated"
 }
 
-# --- UPDATE IMAGE ---
 update_image() {
     load_config
+
     docker pull "$IMAGE" || return
 
-    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    if is_container_running; then
         run_container
         echo "Updated"
     else
@@ -180,7 +194,6 @@ update_image() {
     fi
 }
 
-# --- REMOVE ---
 remove_proxy() {
     read -p "Remove proxy? [y/N]: " confirm
     if [[ "$confirm" == "y" ]]; then
@@ -196,6 +209,7 @@ setup_autoupdate() {
     HEALTH_JOB="*/5 * * * * $BINARY_PATH --health-check"
 
     (crontab -l 2>/dev/null | grep -v "$BINARY_PATH"; echo "$CRON_JOB"; echo "$HEALTH_JOB") | crontab -
+
     echo "Cron enabled"
 }
 
@@ -214,7 +228,7 @@ fi
 if [[ "$1" == "--health-check" ]]; then
     load_config
 
-    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    if ! is_container_running; then
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             docker restart "$CONTAINER_NAME"
         else
@@ -230,15 +244,17 @@ install_deps
 
 while true; do
     clear
+
     echo "Status: $(get_status)"
     echo "Auto-update: $(get_autoupdate_status)"
     echo "Health-check: $(get_healthcheck_status)"
+
     echo "1) Install / Reinstall proxy"
     echo "2) Show connection info"
     echo "3) Update Docker image"
     echo "4) Change port"
 
-    if crontab -l 2>/dev/null | grep -q "$BINARY_PATH --auto-update"; then
+    if is_autoupdate_enabled; then
         echo "5) Disable auto-update"
     else
         echo "5) Enable auto-update"
@@ -250,19 +266,21 @@ while true; do
     read -p "Select: " opt
 
     case $opt in
-        1) install_proxy; read -p "Press Enter..." ;;
-        2) show_config; read -p "Press Enter..." ;;
-        3) update_image; read -p "Press Enter..." ;;
-        4) change_port; read -p "Press Enter..." ;;
+        1) install_proxy ;;
+        2) show_config ;;
+        3) update_image ;;
+        4) change_port ;;
         5)
-            if crontab -l 2>/dev/null | grep -q "$BINARY_PATH --auto-update"; then
+            if is_autoupdate_enabled; then
                 remove_autoupdate
             else
                 setup_autoupdate
             fi
-            read -p "Press Enter..." ;;
-        7) remove_proxy; read -p "Press Enter..." ;;
+            ;;
+        7) remove_proxy ;;
         0) exit 0 ;;
-        *) echo -e "${RED}Invalid option${NC}"; sleep 1 ;;
+        *) echo -e "${RED}Invalid option${NC}" ;;
     esac
- done
+
+    read -p "Press Enter..."
+done
